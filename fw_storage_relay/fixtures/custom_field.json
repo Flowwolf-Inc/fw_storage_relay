@@ -1,0 +1,80 @@
+[
+ {
+  "doctype": "Custom Field",
+  "dt": "File",
+  "fieldname": "cloud_storage_section",
+  "fieldtype": "Tab Break",
+  "insert_after": "file_url",
+  "label": "Cloud Storage",
+  "modified": "2026-06-08 15:52:19.000000",
+  "name": "File-cloud_storage_section"
+ },
+ {
+  "doctype": "Custom Field",
+  "dt": "File",
+  "fieldname": "storage_backend",
+  "fieldtype": "Select",
+  "insert_after": "cloud_storage_section",
+  "label": "Storage Backend",
+  "default": "Local",
+  "modified": "2026-06-08 15:52:19.000000",
+  "name": "File-storage_backend",
+  "options": "Local\nS3\nGoogle Drive\nSharePoint"
+ },
+ {
+  "doctype": "Custom Field",
+  "dt": "File",
+  "fieldname": "cloud_storage_key",
+  "fieldtype": "Data",
+  "insert_after": "storage_backend",
+  "label": "Cloud Storage Key",
+  "modified": "2026-06-08 15:52:19.000000",
+  "name": "File-cloud_storage_key",
+  "read_only": 1
+ },
+ {
+  "doctype": "Custom Field",
+  "dt": "File",
+  "fieldname": "sync_status",
+  "fieldtype": "Select",
+  "insert_after": "cloud_storage_key",
+  "label": "Sync Status",
+  "default": "Pending",
+  "in_standard_filter": 1,
+  "modified": "2026-06-08 15:52:19.000000",
+  "name": "File-sync_status",
+  "options": "Pending\nSynced\nFailed"
+ },
+ {
+  "doctype": "Custom Field",
+  "dt": "File",
+  "fieldname": "synced_on",
+  "fieldtype": "Datetime",
+  "insert_after": "sync_status",
+  "label": "Synced On",
+  "modified": "2026-06-08 15:52:19.000000",
+  "name": "File-synced_on",
+  "read_only": 1
+ },
+ {
+  "doctype": "Custom Field",
+  "dt": "File",
+  "fieldname": "sync_error",
+  "fieldtype": "Small Text",
+  "insert_after": "synced_on",
+  "label": "Sync Error",
+  "modified": "2026-06-08 15:52:19.000000",
+  "name": "File-sync_error",
+  "read_only": 1
+ },
+ {
+  "doctype": "Custom Field",
+  "dt": "File",
+  "fieldname": "file_details_tab",
+  "fieldtype": "Tab Break",
+  "insert_after": "sync_error",
+  "label": "Details",
+  "modified": "2026-06-08 15:52:19.000000",
+  "name": "File-file_details_tab"
+ }
+]

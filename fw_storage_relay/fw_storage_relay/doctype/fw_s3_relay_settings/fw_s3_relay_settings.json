@@ -1,0 +1,93 @@
+{
+ "actions": [],
+ "allow_rename": 1,
+ "creation": "2026-06-05 15:25:57.000000",
+ "doctype": "DocType",
+ "engine": "InnoDB",
+ "field_order": [
+  "enabled",
+  "column_break_general",
+  "s3_folder_prefix",
+  "section_break_visibility",
+  "make_files_public",
+  "presigned_url_expiry",
+  "section_break_exclusions",
+  "excluded_doctypes"
+ ],
+ "fields": [
+  {
+   "default": "0",
+   "description": "Master switch for all S3 offload activity.",
+   "fieldname": "enabled",
+   "fieldtype": "Check",
+   "label": "Enabled"
+  },
+  {
+   "fieldname": "column_break_general",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "",
+   "description": "Optional subdirectory inside the S3 bucket.",
+   "fieldname": "s3_folder_prefix",
+   "fieldtype": "Data",
+   "label": "S3 Folder Prefix"
+  },
+  {
+   "fieldname": "section_break_visibility",
+   "fieldtype": "Section Break",
+   "label": "File Visibility"
+  },
+  {
+   "default": "0",
+   "description": "When enabled, files use permanent public S3 URLs. When disabled, files are served via a permission-checked API that issues fresh presigned URLs.",
+   "fieldname": "make_files_public",
+   "fieldtype": "Check",
+   "label": "Make Files Public"
+  },
+  {
+   "default": "3600",
+   "depends_on": "eval:!doc.make_files_public",
+   "description": "Seconds before a presigned download link expires.",
+   "fieldname": "presigned_url_expiry",
+   "fieldtype": "Int",
+   "label": "Presigned URL Expiry",
+   "non_negative": 1
+  },
+  {
+   "fieldname": "section_break_exclusions",
+   "fieldtype": "Section Break",
+   "label": "Exclusions"
+  },
+  {
+   "fieldname": "excluded_doctypes",
+   "fieldtype": "Table",
+   "label": "Excluded Doctypes",
+   "options": "FW S3 Relay Excluded Doctype"
+  }
+ ],
+ "index_web_pages_for_search": 1,
+ "issingle": 1,
+ "links": [],
+ "modified": "2026-06-05 15:25:57.000000",
+ "modified_by": "Administrator",
+ "module": "FW Storage Relay",
+ "name": "FW S3 Relay Settings",
+ "owner": "Administrator",
+ "permissions": [
+  {
+   "create": 1,
+   "delete": 1,
+   "email": 1,
+   "print": 1,
+   "read": 1,
+   "role": "System Manager",
+   "share": 1,
+   "write": 1
+  }
+ ],
+ "row_format": "Dynamic",
+ "sort_field": "modified",
+ "sort_order": "DESC",
+ "states": []
+}
