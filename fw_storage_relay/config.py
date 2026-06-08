@@ -37,15 +37,12 @@ def get_s3_config() -> dict | None:
 
 
 def is_relay_enabled() -> bool:
-	if not frappe.db.table_exists("tabFW S3 Relay Settings"):
-		return False
-
 	return bool(frappe.db.get_single_value(SETTINGS_DOCTYPE, "enabled"))
 
 
 @site_cache
 def get_excluded_doctypes() -> frozenset[str]:
-	if not frappe.db.table_exists("tabFW S3 Relay Excluded Doctype"):
+	if not frappe.db.table_exists("FW S3 Relay Excluded Doctype"):
 		return frozenset()
 
 	rows = frappe.get_all(
