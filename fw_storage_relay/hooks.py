@@ -22,3 +22,7 @@ write_file = "fw_storage_relay.relay.write_file"
 delete_file_data_content = "fw_storage_relay.relay.delete_file_data_content"
 
 fixtures = ["Custom Field"]
+
+doctype_js = {
+	"File": "public/js/file.js",
+}

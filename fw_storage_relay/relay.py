@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import frappe
 from botocore.exceptions import ClientError
+from frappe import _
 from frappe.utils import get_url, now
 from frappe.utils.file_manager import delete_file, save_file_on_filesystem
 
@@ -261,3 +262,24 @@ def generate_presigned_url(storage_key: str) -> str:
 
 def validate_relay_ready() -> bool:
 	return bool(get_s3_config()) and frappe.db.get_single_value("FW S3 Relay Settings", "enabled")
+
+
+def manual_offload_file(file_doc: File) -> dict:
+	if not validate_relay_ready():
+		frappe.throw(_("FW Storage Relay is disabled or S3 is not configured"))
+
+	if not can_offload_file(file_doc):
+		frappe.throw(_("This file cannot be uploaded to S3"))
+
+	try:
+		offload_file(file_doc, persist=True)
+	except Exception as exc:
+		_log_sync_error(file_doc, exc, persist=True)
+		frappe.throw(_("S3 upload failed: {0}").format(str(exc)))
+
+	return {
+		"storage_backend": file_doc.storage_backend,
+		"sync_status": file_doc.sync_status,
+		"cloud_storage_key": file_doc.cloud_storage_key,
+		"file_url": file_doc.file_url,
+	}
