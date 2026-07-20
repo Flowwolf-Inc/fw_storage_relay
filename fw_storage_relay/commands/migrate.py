@@ -6,9 +6,13 @@ import traceback
 import click
 import frappe
 from frappe.commands import get_site, pass_context
+from frappe.query_builder import Order
+from frappe.query_builder.functions import IfNull
 
 from fw_storage_relay.config import can_offload_file
 from fw_storage_relay.relay import offload_file, validate_relay_ready
+
+MISSING_LOCAL_FILE_ERROR = "Local file not found on disk"
 
 
 @click.command("migrate-s3-files")
@@ -52,6 +56,15 @@ def _run_migration(batch_size: int, limit: int):
 					continue
 
 				if not file_doc.exists_on_disk():
+					frappe.db.set_value(
+						"File",
+						file_name,
+						{
+							"sync_status": "Failed",
+							"sync_error": MISSING_LOCAL_FILE_ERROR,
+						},
+						update_modified=False,
+					)
 					click.echo(f"Skipping missing local file: {file_name}")
 					continue
 
@@ -80,17 +93,16 @@ def _run_migration(batch_size: int, limit: int):
 
 
 def _get_pending_files(batch_size: int) -> list[str]:
-	return frappe.db.sql(
-		"""
-		SELECT name
-		FROM `tabFile`
-		WHERE IFNULL(sync_status, 'Pending') != 'Synced'
-			AND IFNULL(storage_backend, 'Local') = 'Local'
-			AND is_folder = 0
-			AND IFNULL(file_url, '') NOT LIKE 'http%%'
-		ORDER BY creation
-		LIMIT %s
-		""",
-		batch_size,
-		pluck=True,
+	File = frappe.qb.DocType("File")
+
+	return (
+		frappe.qb.from_(File)
+		.select(File.name)
+		.where(IfNull(File.sync_status, "Pending") == "Pending")
+		.where(IfNull(File.storage_backend, "Local") == "Local")
+		.where(File.is_folder == 0)
+		.where(IfNull(File.file_url, "").not_like("http%"))
+		.orderby(File.creation, order=Order.asc)
+		.limit(batch_size)
+		.run(pluck=True)
 	)
