@@ -150,3 +150,18 @@ class TestFileShareKey(FrappeTestCase):
 		info = get_file_share_info(self.file_doc.name)
 		self.assertIsNone(info["key"])
 		self.assertIsNone(info["share_url"])
+
+	def test_file_doc_generate_and_get_share_info(self):
+		info = self.file_doc.generate_file_share_key()
+
+		self.assertIsNotNone(info["key"])
+		self.assertIn(f"fid={self.file_doc.name}", info["share_url"])
+		self.assertIn(f"token={info['key']}", info["share_url"])
+		self.assertEqual(self.file_doc.get_file_share_info()["key"], info["key"])
+
+	def test_file_doc_revoke_share_key(self):
+		self.file_doc.generate_file_share_key()
+		info = self.file_doc.revoke_file_share_key()
+
+		self.assertIsNone(info["key"])
+		self.assertIsNone(info["share_url"])

@@ -18,7 +18,7 @@ SETTINGS_DOCTYPE = "FW S3 Relay Settings"
 STORAGE_BACKEND_S3 = "S3"
 
 
-@site_cache
+@site_cache(ttl=300)
 def get_s3_config() -> dict | None:
 	access_key = frappe.conf.get("fw_s3_access_key")
 	secret_key = frappe.conf.get("fw_s3_secret_key")
