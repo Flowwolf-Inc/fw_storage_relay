@@ -9,8 +9,8 @@ from frappe.commands import get_site, pass_context
 from frappe.query_builder import Order
 from frappe.query_builder.functions import IfNull
 
-from fw_storage_relay.config import can_offload_file
-from fw_storage_relay.relay import offload_file, validate_relay_ready
+from fw_storage_relay.config import can_offload_file, get_excluded_doctypes
+from fw_storage_relay.relay import _copy_s3_metadata_from_duplicate, offload_file, validate_relay_ready
 
 MISSING_LOCAL_FILE_ERROR = "Local file not found on disk"
 
@@ -45,7 +45,7 @@ def _run_migration(batch_size: int, limit: int):
 			break
 
 		current_batch_size = batch_size if remaining_limit is None else min(batch_size, remaining_limit)
-		files = _get_pending_files(current_batch_size)
+		files = _get_pending_files(current_batch_size, get_excluded_doctypes())
 		if not files:
 			break
 
@@ -56,6 +56,11 @@ def _run_migration(batch_size: int, limit: int):
 					continue
 
 				if not file_doc.exists_on_disk():
+					if _copy_s3_metadata_from_duplicate(file_doc, persist=True):
+						processed += 1
+						click.echo(f"Synced from duplicate: {file_name}")
+						continue
+
 					frappe.db.set_value(
 						"File",
 						file_name,
@@ -65,6 +70,7 @@ def _run_migration(batch_size: int, limit: int):
 						},
 						update_modified=False,
 					)
+					_add_comment(file_name, f"S3 Migration: {MISSING_LOCAL_FILE_ERROR}")
 					click.echo(f"Skipping missing local file: {file_name}")
 					continue
 
@@ -85,6 +91,7 @@ def _run_migration(batch_size: int, limit: int):
 					},
 					update_modified=False,
 				)
+				_add_comment(file_name, "S3 Migration failed. See Error Log for details.")
 				click.echo(f"Failed: {file_name} (logged)")
 
 		frappe.db.commit()
@@ -92,10 +99,10 @@ def _run_migration(batch_size: int, limit: int):
 	click.echo(f"Migration complete. Processed {processed} file(s).")
 
 
-def _get_pending_files(batch_size: int) -> list[str]:
+def _get_pending_files(batch_size: int, excluded_doctypes: frozenset[str]) -> list[str]:
 	File = frappe.qb.DocType("File")
 
-	return (
+	query = (
 		frappe.qb.from_(File)
 		.select(File.name)
 		.where(IfNull(File.sync_status, "Pending") == "Pending")
@@ -104,5 +111,23 @@ def _get_pending_files(batch_size: int) -> list[str]:
 		.where(IfNull(File.file_url, "").not_like("http%"))
 		.orderby(File.creation, order=Order.asc)
 		.limit(batch_size)
-		.run(pluck=True)
 	)
+
+	if excluded_doctypes:
+		query = query.where(
+			IfNull(File.attached_to_doctype, "").notin(list(excluded_doctypes))
+		)
+
+	return query.run(pluck=True)
+
+
+def _add_comment(file_name: str, message: str) -> None:
+	frappe.get_doc(
+		{
+			"doctype": "Comment",
+			"comment_type": "Comment",
+			"reference_doctype": "File",
+			"reference_name": file_name,
+			"content": message,
+		}
+	).insert(ignore_permissions=True)

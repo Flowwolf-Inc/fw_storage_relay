@@ -272,9 +272,14 @@ def manual_offload_file(file_doc: File) -> dict:
 		frappe.throw(_("This file cannot be uploaded to S3"))
 
 	try:
-		offload_file(file_doc, persist=True)
+		if not file_doc.exists_on_disk():
+			if not _copy_s3_metadata_from_duplicate(file_doc, persist=True):
+				frappe.throw(_("Local file not found and no synced S3 duplicate exists"))
+		else:
+			offload_file(file_doc, persist=True)
 	except Exception as exc:
 		_log_sync_error(file_doc, exc, persist=True)
+		frappe.db.commit()
 		frappe.throw(_("S3 upload failed: {0}").format(str(exc)))
 
 	return {
