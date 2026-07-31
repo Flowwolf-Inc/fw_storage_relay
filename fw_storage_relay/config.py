@@ -36,6 +36,7 @@ def get_s3_config() -> dict | None:
 	}
 
 
+@site_cache(ttl=300)
 def is_relay_enabled() -> bool:
 	return bool(frappe.db.get_single_value(SETTINGS_DOCTYPE, "enabled"))
 
@@ -60,11 +61,13 @@ def is_doctype_excluded(doctype: str | None) -> bool:
 	return doctype in get_excluded_doctypes()
 
 
+@site_cache(ttl=300)
 def get_s3_folder_prefix() -> str:
 	prefix = frappe.db.get_single_value(SETTINGS_DOCTYPE, "s3_folder_prefix") or ""
 	return prefix if prefix.endswith("/") else f"{prefix}/" if prefix else ""
 
 
+@site_cache(ttl=300)
 def should_make_files_public() -> bool:
 	return bool(frappe.db.get_single_value(SETTINGS_DOCTYPE, "make_files_public"))
 

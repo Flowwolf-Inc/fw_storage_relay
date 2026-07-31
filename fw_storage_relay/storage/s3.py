@@ -32,7 +32,6 @@ class S3Backend:
 			extra_args["ACL"] = "public-read"
 
 		self._client.put_object(Bucket=self.bucket, Key=key, Body=content, **extra_args)
-		self._client.head_object(Bucket=self.bucket, Key=key)
 
 	def download(self, key: str) -> bytes:
 		response = self._client.get_object(Bucket=self.bucket, Key=key)

@@ -3,10 +3,13 @@
 
 from __future__ import annotations
 
+from frappe.utils.caching import site_cache
+
 from fw_storage_relay.config import STORAGE_BACKEND_S3
 from fw_storage_relay.storage.s3 import S3Backend
 
 
+@site_cache()
 def get_backend(name: str = STORAGE_BACKEND_S3):
 	if name == STORAGE_BACKEND_S3:
 		return S3Backend()
