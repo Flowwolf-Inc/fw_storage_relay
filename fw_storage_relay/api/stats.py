@@ -31,7 +31,7 @@ def get_storage_stats() -> dict:
 def _get_sync_status_counts() -> dict[str, int]:
 	rows = frappe.db.get_all(
 		"File",
-		fields=["ifnull(`sync_status`, 'Pending') as sync_status", "count(*) as count"],
+		fields=["`sync_status` as sync_status", "count(*) as count"],
 		group_by="sync_status",
 	)
 	result: dict[str, int] = {"Synced": 0, "Failed": 0, "Pending": 0}
@@ -42,11 +42,11 @@ def _get_sync_status_counts() -> dict[str, int]:
 
 
 def _count_files_in_dir(path: str) -> int:
-	"""Count regular files in a directory, returning 0 if the directory does not exist."""
+	"""Count regular files in a directory tree, returning 0 if the directory does not exist."""
 	if not os.path.isdir(path):
 		return 0
 	try:
-		return sum(1 for entry in os.scandir(path) if entry.is_file())
+		return sum(len(files) for _, _, files in os.walk(path))
 	except OSError:
 		return 0
 

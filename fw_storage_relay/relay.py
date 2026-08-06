@@ -57,7 +57,7 @@ def after_insert_offload(doc: File, method=None):
 		_refresh_s3_file_url(doc)
 		return
 
-	if _copy_s3_metadata_from_duplicate(doc, persist=True):
+	if _copy_s3_metadata_from_duplicate(doc, persist=True, delete_local=True):
 		_refresh_s3_file_url(doc)
 		return
 
@@ -162,8 +162,8 @@ def _sync_from_duplicate(file_doc: File, *, persist: bool, delete_local: bool = 
 	return {"file_name": file_doc.file_name, "file_url": file_url}
 
 
-def _copy_s3_metadata_from_duplicate(file_doc: File, *, persist: bool) -> bool:
-	return _sync_from_duplicate(file_doc, persist=persist) is not None
+def _copy_s3_metadata_from_duplicate(file_doc: File, *, persist: bool, delete_local: bool = False) -> bool:
+	return _sync_from_duplicate(file_doc, persist=persist, delete_local=delete_local) is not None
 
 
 def get_serve_file_url(file_name: str) -> str:

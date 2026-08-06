@@ -58,6 +58,17 @@ Open **FW S3 Relay Settings** (System Manager only):
 - Files are served via `/api/method/fw_storage_relay.api.serve_file.serve_file?fid=<file_id>`.
 - Frappe checks file permissions, then redirects to a fresh presigned S3 URL.
 
+## Bench commands
+
+The app ships four bench commands:
+
+| Command | Purpose |
+|---------|---------|
+| `migrate-s3-files` | Migrate existing local attachments to S3 (see [Bulk migration](#bulk-migration)) |
+| `cleanup-s3-orphans` | Delete orphaned local disk files after S3 offload (see [Cleanup orphaned local files](#cleanup-orphaned-local-files)) |
+| `update-s3-file-urls` | Rewrite `File.file_url` after a site domain change (see [Site domain migration](#site-domain-migration)) |
+| `rename-s3-folder` | Move S3 objects to a new site prefix after a domain change (see [Site domain migration](#site-domain-migration)) |
+
 ## Bulk migration
 
 Migrate existing local attachments to S3 (safe to re-run; already-synced files are skipped):
@@ -70,8 +81,39 @@ Options:
 
 - `--batch-size` — files processed per DB commit batch (default: 50)
 - `--limit` — maximum files to process in this run (default: 0 = no limit)
+- `--workers` — number of parallel upload threads (default: 1)
 
 For large datasets (multi-TB), run inside `tmux` or `screen` and tune batch size as needed.
+
+## Cleanup orphaned local files
+
+`cleanup-s3-orphans` deletes local disk files that are no longer needed after S3 offload. It has two modes:
+
+- **Default (DB-first)** — finds File records with `sync_status = Synced` and `storage_backend = S3` and removes their leftover local files under `public/files` / `private/files`.
+- **`--scan-disk` (disk-first)** — walks `public/files` and `private/files` and deletes any file that has no corresponding File doctype record in the database.
+
+Always do a dry-run first:
+
+```bash
+# Dry-run first
+bench --site <site> cleanup-s3-orphans --dry-run
+
+# Apply
+bench --site <site> cleanup-s3-orphans --workers 4
+
+# Disk-first mode: delete files with no DB record
+bench --site <site> cleanup-s3-orphans --scan-disk --dry-run
+```
+
+Options:
+
+- `--batch-size` — files per batch (default: 100)
+- `--limit` — maximum files to process (default: 0 = no limit)
+- `--workers` — parallel deletion threads (default: 1)
+- `--dry-run` — report what would be deleted without touching disk
+- `--scan-disk` — disk-first orphan scan
+
+Errors are logged to Frappe Error Log. The command never modifies DB records and is safe to re-run.
 
 ## Behavior summary
 
