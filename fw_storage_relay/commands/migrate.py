@@ -21,8 +21,9 @@ MISSING_LOCAL_FILE_ERROR = "Local file not found on disk"
 @click.option("--batch-size", default=50, show_default=True, help="Number of files per batch")
 @click.option("--limit", default=0, show_default=True, help="Maximum files to process (0 = no limit)")
 @click.option("--workers", default=1, show_default=True, help="Number of parallel upload threads")
+@click.option("--force", is_flag=True, default=False, help="Ignore the enabled flag from FW S3 Relay Settings")
 @pass_context
-def migrate_s3_files(context, batch_size, limit, workers):
+def migrate_s3_files(context, batch_size, limit, workers, force):
 	"Migrate local File attachments to S3"
 
 	site = get_site(context)
@@ -30,7 +31,7 @@ def migrate_s3_files(context, batch_size, limit, workers):
 	frappe.connect()
 
 	try:
-		_run_migration(batch_size=batch_size, limit=limit, workers=workers)
+		_run_migration(batch_size=batch_size, limit=limit, workers=workers, force=force)
 	finally:
 		frappe.destroy()
 
@@ -45,13 +46,13 @@ class _FileResult:
 	tb: str | None = None
 
 
-def _process_file(site: str, file_name: str) -> _FileResult:
+def _process_file(site: str, file_name: str, force: bool = False) -> _FileResult:
 	"""Run in a worker thread — each thread owns its own Frappe DB connection."""
 	frappe.init(site=site)
 	frappe.connect()
 	try:
 		file_doc = frappe.get_doc("File", file_name)
-		if not can_offload_file(file_doc):
+		if not can_offload_file(file_doc, ignore_enabled=force):
 			return _FileResult(file_name=file_name, success=False)
 
 		if not file_doc.exists_on_disk():
@@ -72,7 +73,7 @@ def _process_file(site: str, file_name: str) -> _FileResult:
 			frappe.db.commit()
 			return _FileResult(file_name=file_name, success=False, missing=True)
 
-		offload_file(file_doc, persist=True)
+		offload_file(file_doc, persist=True, ignore_enabled=force)
 		frappe.db.commit()
 		return _FileResult(file_name=file_name, success=True)
 	except Exception:
@@ -101,21 +102,27 @@ def _process_file(site: str, file_name: str) -> _FileResult:
 		frappe.destroy()
 
 
-def _run_migration(batch_size: int, limit: int, workers: int = 1):
-	if not validate_relay_ready():
-		click.echo("FW Storage Relay is disabled or S3 site_config is missing.")
+def _run_migration(batch_size: int, limit: int, workers: int = 1, force: bool = False):
+	if not validate_relay_ready(ignore_enabled=force):
+		if force:
+			click.echo("S3 site_config is missing.")
+		else:
+			click.echo("FW Storage Relay is disabled or S3 site_config is missing.")
 		return
+
+	if force and not frappe.db.get_single_value("FW S3 Relay Settings", "enabled"):
+		click.echo("Running with --force: FW Storage Relay is disabled, migrating anyway.")
 
 	site = frappe.local.site
 
 	if workers > 1:
 		click.echo(f"Starting parallel migration with {workers} worker(s).")
-		_run_migration_parallel(site=site, batch_size=batch_size, limit=limit, workers=workers)
+		_run_migration_parallel(site=site, batch_size=batch_size, limit=limit, workers=workers, force=force)
 	else:
-		_run_migration_serial(batch_size=batch_size, limit=limit)
+		_run_migration_serial(batch_size=batch_size, limit=limit, force=force)
 
 
-def _run_migration_parallel(site: str, batch_size: int, limit: int, workers: int):
+def _run_migration_parallel(site: str, batch_size: int, limit: int, workers: int, force: bool = False):
 	processed = 0
 
 	with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -129,7 +136,7 @@ def _run_migration_parallel(site: str, batch_size: int, limit: int, workers: int
 			if not files:
 				break
 
-			futures = {executor.submit(_process_file, site, fn): fn for fn in files}
+			futures = {executor.submit(_process_file, site, fn, force): fn for fn in files}
 			for future in as_completed(futures):
 				result = future.result()
 				if result.synced_from_duplicate:
@@ -146,7 +153,7 @@ def _run_migration_parallel(site: str, batch_size: int, limit: int, workers: int
 	click.echo(f"Migration complete. Processed {processed} file(s).")
 
 
-def _run_migration_serial(batch_size: int, limit: int):
+def _run_migration_serial(batch_size: int, limit: int, force: bool = False):
 	processed = 0
 
 	while True:
@@ -162,7 +169,7 @@ def _run_migration_serial(batch_size: int, limit: int):
 		for file_name in files:
 			try:
 				file_doc = frappe.get_doc("File", file_name)
-				if not can_offload_file(file_doc):
+				if not can_offload_file(file_doc, ignore_enabled=force):
 					continue
 
 				if not file_doc.exists_on_disk():
@@ -184,7 +191,7 @@ def _run_migration_serial(batch_size: int, limit: int):
 					click.echo(f"Skipping missing local file: {file_name}")
 					continue
 
-				offload_file(file_doc, persist=True)
+				offload_file(file_doc, persist=True, ignore_enabled=force)
 				processed += 1
 				click.echo(f"Migrated {processed}: {file_name}")
 			except Exception:
@@ -203,8 +210,11 @@ def _run_migration_serial(batch_size: int, limit: int):
 				)
 				_add_comment(file_name, "S3 Migration failed. See Error Log for details.")
 				click.echo(f"Failed: {file_name} (logged)")
-
-		frappe.db.commit()
+			finally:
+				# Commit per file: uploads and local deletions are not
+				# transactional, so a long-lived uncommitted batch risks DB
+				# state rolling back after files were already moved to S3.
+				frappe.db.commit()
 
 	click.echo(f"Migration complete. Processed {processed} file(s).")
 

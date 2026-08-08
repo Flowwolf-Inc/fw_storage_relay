@@ -94,8 +94,18 @@ def _run_url_update(*, old_url: str, new_url: str, batch_size: int, dry_run: boo
 @click.option("--new-site", required=True, help="New site folder name, e.g. sandbox-fortfreight.flowwolf.cloud")
 @click.option("--batch-size", default=50, show_default=True, help="Number of distinct S3 keys per commit batch")
 @click.option("--dry-run", is_flag=True, help="Preview affected records without touching S3 or the database")
+@click.option(
+	"--db-only",
+	is_flag=True,
+	help="Only update cloud_storage_key in the database; skip all S3 copy/delete operations",
+)
+@click.option(
+	"--no-delete",
+	is_flag=True,
+	help="Copy objects and update the database but keep the old S3 objects in place",
+)
 @pass_context
-def rename_s3_folder(context, old_site, new_site, batch_size, dry_run):
+def rename_s3_folder(context, old_site, new_site, batch_size, dry_run, db_only, no_delete):
 	"Copy S3 objects from the old site prefix to the new one and update cloud_storage_key in File records"
 
 	site = get_site(context)
@@ -103,22 +113,41 @@ def rename_s3_folder(context, old_site, new_site, batch_size, dry_run):
 	frappe.connect()
 
 	try:
-		_run_folder_rename(old_site=old_site, new_site=new_site, batch_size=batch_size, dry_run=dry_run)
+		_run_folder_rename(
+			old_site=old_site,
+			new_site=new_site,
+			batch_size=batch_size,
+			dry_run=dry_run,
+			db_only=db_only,
+			no_delete=no_delete,
+		)
 	finally:
 		frappe.destroy()
 
 
-def _run_folder_rename(*, old_site: str, new_site: str, batch_size: int, dry_run: bool):
-	if not get_s3_config():
+def _run_folder_rename(
+	*,
+	old_site: str,
+	new_site: str,
+	batch_size: int,
+	dry_run: bool,
+	db_only: bool = False,
+	no_delete: bool = False,
+):
+	if not db_only and not get_s3_config():
 		click.echo("S3 configuration is missing from site_config.json. Aborting.")
 		return
 
 	if dry_run:
 		click.echo(f"[dry-run] Scanning for cloud_storage_key under prefix: {old_site}/")
+	elif db_only:
+		click.echo(f"[db-only] Updating cloud_storage_key prefix: {old_site}/ → {new_site}/ (S3 untouched)")
+	elif no_delete:
+		click.echo(f"Copying S3 folder (old objects kept): {old_site}/ → {new_site}/")
 	else:
 		click.echo(f"Renaming S3 folder: {old_site}/ → {new_site}/")
 
-	backend = get_backend()
+	backend = None if db_only else get_backend()
 	File = frappe.qb.DocType("File")
 	processed = 0
 	failed = 0
@@ -147,6 +176,17 @@ def _run_folder_rename(*, old_site: str, new_site: str, batch_size: int, dry_run
 			if dry_run:
 				click.echo(f"  [dry-run] {old_key!r} → {new_key!r}")
 				processed += 1
+				continue
+
+			if db_only:
+				# Bulk-update ALL File records that share this old key in a single query.
+				(
+					frappe.qb.update(File)
+					.set(File.cloud_storage_key, new_key)
+					.where(File.cloud_storage_key == old_key)
+				).run()
+				processed += 1
+				click.echo(f"Updated {processed}: {old_key!r} → {new_key!r}")
 				continue
 
 			just_copied = False
@@ -188,8 +228,9 @@ def _run_folder_rename(*, old_site: str, new_site: str, batch_size: int, dry_run
 				.where(File.cloud_storage_key == old_key)
 			).run()
 
-			# Only delete the old S3 object if we copied it in this run.
-			if just_copied:
+			# Only delete the old S3 object if we copied it in this run
+			# and the caller did not ask to keep the source objects.
+			if just_copied and not no_delete:
 				try:
 					backend.delete(old_key)
 				except ClientError:
@@ -200,12 +241,20 @@ def _run_folder_rename(*, old_site: str, new_site: str, batch_size: int, dry_run
 					click.echo(f"Warning: copied but failed to delete old key {old_key!r} — see Error Log")
 
 			processed += 1
-			click.echo(f"Renamed {processed}: {old_key!r} → {new_key!r}")
+			verb = "Copied" if no_delete else "Renamed"
+			click.echo(f"{verb} {processed}: {old_key!r} → {new_key!r}")
 
 		if not dry_run:
 			frappe.db.commit()
 
-	label = "[dry-run] Would rename" if dry_run else "Renamed"
+	if dry_run:
+		label = "[dry-run] Would rename"
+	elif db_only:
+		label = "[db-only] Updated"
+	elif no_delete:
+		label = "Copied (old objects kept)"
+	else:
+		label = "Renamed"
 	click.echo(f"{label} {processed} S3 key(s).")
 	if failed:
 		click.echo(f"Failures: {failed} — check Frappe Error Log for details.")

@@ -165,7 +165,7 @@ Options:
 
 Without this step, existing S3 objects remain under the old site prefix (e.g. `fortfreight.apps.sandbox.flowwolf.link/private/...`). They are still fully accessible — `serve_file` uses the stored `cloud_storage_key` directly. This command is only needed if you want the bucket layout to reflect the new site name.
 
-For each file it: copies the S3 object to the new key, updates `File.cloud_storage_key` in the database, then deletes the old object.
+For each file it: copies the S3 object to the new key, updates `File.cloud_storage_key` in the database, then deletes the old object (pass `--no-delete` to skip the delete step and keep the old objects).
 
 ```bash
 # Dry-run first
@@ -186,6 +186,40 @@ Options:
 - `--new-site` — site folder name on the new server (the S3 prefix to rename to)
 - `--batch-size` — objects per S3+DB batch (default: 50)
 - `--dry-run` — print what would move without touching S3 or the database
+- `--db-only` — only update `cloud_storage_key` in the database; S3 is not touched (see below)
+- `--no-delete` — copy objects and update the database, but keep the old S3 objects in place so they can be reviewed and deleted manually later
+
+#### Keeping the old objects as a safety net (`--no-delete`)
+
+If you want a verification window before anything is removed from the bucket, add `--no-delete`. The command still copies every object to the new prefix and updates the database, but the old objects stay in place — downloads immediately use the new keys, and the old folder remains as a backup. Delete it manually (e.g. from the AWS console) once you have verified everything works:
+
+```bash
+bench --site <new-site> rename-s3-folder \
+  --old-site fortfreight.apps.sandbox.flowwolf.link \
+  --new-site sandbox-fortfreight.flowwolf.cloud \
+  --no-delete
+```
+
+#### Moving the S3 objects manually (`--db-only`)
+
+If you prefer to move the bucket folder yourself (e.g. with the AWS CLI, which is much faster for large buckets), use `--db-only` and follow this order so downloads never break:
+
+```bash
+# 1. Copy the old prefix to the new one (old objects stay in place)
+aws s3 sync s3://<bucket>/fortfreight.apps.sandbox.flowwolf.link/ \
+            s3://<bucket>/sandbox-fortfreight.flowwolf.cloud/
+
+# 2. Point the database at the new prefix
+bench --site <new-site> rename-s3-folder \
+  --old-site fortfreight.apps.sandbox.flowwolf.link \
+  --new-site sandbox-fortfreight.flowwolf.cloud \
+  --db-only
+
+# 3. Only after verifying downloads work, delete the old prefix
+aws s3 rm s3://<bucket>/fortfreight.apps.sandbox.flowwolf.link/ --recursive
+```
+
+Copying first (step 1) before updating the database (step 2) means both prefixes exist during the migration, so there is no window where `serve_file` returns 404s.
 
 > **IAM requirement:** this command calls `s3:CopyObject`. Add it to your bucket policy alongside the existing `s3:PutObject`, `s3:GetObject`, and `s3:DeleteObject`.
 

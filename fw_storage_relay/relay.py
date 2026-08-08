@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING
 import frappe
 from botocore.exceptions import ClientError
 from frappe import _
-from frappe.utils import get_url, now
+from frappe.query_builder.functions import IfNull
+from frappe.utils import cint, get_url, now
 from frappe.utils.file_manager import delete_file, save_file_on_filesystem
 
 from fw_storage_relay.config import (
@@ -20,6 +21,7 @@ from fw_storage_relay.config import (
 	can_offload_file,
 	get_presigned_url_expiry,
 	get_s3_config,
+	is_doctype_excluded,
 	should_make_files_public,
 )
 from fw_storage_relay.storage import get_backend
@@ -70,8 +72,8 @@ def after_insert_offload(doc: File, method=None):
 		_log_sync_error(doc, exc, persist=True)
 
 
-def offload_file(file_doc: File, *, persist: bool = True) -> bool:
-	if not can_offload_file(file_doc):
+def offload_file(file_doc: File, *, persist: bool = True, ignore_enabled: bool = False) -> bool:
+	if not can_offload_file(file_doc, ignore_enabled=ignore_enabled):
 		return False
 
 	if not file_doc.exists_on_disk():
@@ -111,14 +113,95 @@ def _upload_to_s3(file_doc: File, content: bytes, *, persist: bool):
 	storage_key = build_storage_key(file_doc)
 	content_type = mimetypes.guess_type(file_doc.file_name)[0]
 	public = should_make_files_public()
+	metadata = {"content-hash": file_doc.content_hash} if file_doc.content_hash else None
 
-	backend.upload(storage_key, content, content_type=content_type, public=public)
+	backend.upload(storage_key, content, content_type=content_type, public=public, metadata=metadata)
 
 	file_url = _get_offloaded_file_url(file_doc, storage_key, backend)
 	_delete_local_file(file_doc)
 
 	_set_sync_success(file_doc, storage_key, file_url, persist=persist)
+
+	if persist and file_doc.name:
+		_propagate_to_duplicates(file_doc)
+
 	return {"file_name": file_doc.file_name, "file_url": file_url}
+
+
+def _propagate_to_duplicates(source_doc: File) -> None:
+	"""Push S3 metadata to sibling File records sharing the same content.
+
+	Without this, duplicates are only linked when they are individually
+	processed (pull-based), and siblings already marked Failed because the
+	shared local file was deleted would never recover.
+
+	Applies the source doc's metadata directly with primary-key updates.
+	Re-running the duplicate lookup per sibling (as _sync_from_duplicate
+	does) is prohibitively slow for hashes with thousands of copies.
+	"""
+	if not source_doc.content_hash or not source_doc.cloud_storage_key:
+		return
+
+	file_table = frappe.qb.DocType("File")
+	duplicates = (
+		frappe.qb.from_(file_table)
+		.select(
+			file_table.name,
+			file_table.file_url,
+			file_table.old_file_url,
+			file_table.attached_to_doctype,
+		)
+		.where(file_table.content_hash == source_doc.content_hash)
+		.where(file_table.is_private == cint(source_doc.is_private))
+		.where(file_table.is_folder == 0)
+		.where(file_table.name != source_doc.name)
+		.where(IfNull(file_table.storage_backend, "Local") == "Local")
+		.where(IfNull(file_table.sync_status, "Pending").isin(["Pending", "Failed"]))
+	).run(as_dict=True)
+
+	if not duplicates:
+		return
+
+	shared_public_url = (
+		get_backend().get_public_url(source_doc.cloud_storage_key) if should_make_files_public() else None
+	)
+	synced_on = source_doc.synced_on or now()
+
+	local_paths = set()
+	for duplicate in duplicates:
+		if is_doctype_excluded(duplicate.attached_to_doctype):
+			continue
+
+		try:
+			values = {
+				"storage_backend": STORAGE_BACKEND_S3,
+				"cloud_storage_key": source_doc.cloud_storage_key,
+				"sync_status": "Synced",
+				"synced_on": synced_on,
+				"sync_error": None,
+				"file_url": shared_public_url or get_serve_file_url(duplicate.name),
+			}
+
+			if duplicate.file_url and duplicate.file_url.startswith(("/private/files/", "/files/")):
+				local_paths.add(duplicate.file_url)
+				if not duplicate.old_file_url:
+					values["old_file_url"] = duplicate.file_url
+
+			frappe.db.set_value("File", duplicate.name, values, update_modified=False)
+		except Exception:
+			frappe.log_error(
+				title="FW Storage Relay Duplicate Propagation Failed",
+				message=f"Source: {source_doc.name}\nDuplicate: {duplicate.name}\n\n{traceback.format_exc()}",
+			)
+
+	for path in local_paths:
+		try:
+			delete_file(path)
+		except Exception:
+			frappe.log_error(
+				title="FW Storage Relay Duplicate Propagation Failed",
+				message=f"Source: {source_doc.name}\nCould not delete local file: {path}\n\n{traceback.format_exc()}",
+			)
 
 
 def _get_synced_s3_duplicate(file_doc: File) -> dict | None:
@@ -204,6 +287,15 @@ def _set_sync_success(file_doc: File, storage_key: str, file_url: str | None, *,
 		"synced_on": synced_on or now(),
 		"sync_error": None,
 	}
+
+	previous_file_url = file_doc.file_url
+	if (
+		previous_file_url
+		and previous_file_url.startswith(("/private/files/", "/files/"))
+		and not file_doc.get("old_file_url")
+	):
+		values["old_file_url"] = previous_file_url
+
 	if file_url:
 		values["file_url"] = file_url
 
@@ -260,8 +352,11 @@ def generate_presigned_url(storage_key: str) -> str:
 	return get_backend().get_presigned_url(storage_key, get_presigned_url_expiry())
 
 
-def validate_relay_ready() -> bool:
-	return bool(get_s3_config()) and frappe.db.get_single_value("FW S3 Relay Settings", "enabled")
+def validate_relay_ready(*, ignore_enabled: bool = False) -> bool:
+	if not get_s3_config():
+		return False
+
+	return ignore_enabled or bool(frappe.db.get_single_value("FW S3 Relay Settings", "enabled"))
 
 
 def manual_offload_file(file_doc: File) -> dict:

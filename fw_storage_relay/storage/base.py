@@ -7,7 +7,15 @@ from typing import Protocol
 
 
 class StorageBackend(Protocol):
-	def upload(self, key: str, content: bytes, *, content_type: str | None = None, public: bool = False) -> None:
+	def upload(
+		self,
+		key: str,
+		content: bytes,
+		*,
+		content_type: str | None = None,
+		public: bool = False,
+		metadata: dict | None = None,
+	) -> None:
 		...
 
 	def download(self, key: str) -> bytes:

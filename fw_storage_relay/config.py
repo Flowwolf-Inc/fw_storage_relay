@@ -87,14 +87,17 @@ def build_storage_key(file_doc: File) -> str:
 	return f"{get_s3_folder_prefix()}{frappe.local.site}/{visibility}/{object_name}"
 
 
-def can_offload_file(file_doc: File) -> bool:
+def can_offload_file(file_doc: File, *, ignore_enabled: bool = False) -> bool:
 	if file_doc.is_folder or file_doc.is_remote_file:
 		return False
 
 	if file_doc.get("storage_backend") == STORAGE_BACKEND_S3 and file_doc.get("sync_status") == "Synced":
 		return False
 
-	if not is_relay_enabled() or not get_s3_config():
+	if not ignore_enabled and not is_relay_enabled():
+		return False
+
+	if not get_s3_config():
 		return False
 
 	return not is_doctype_excluded(file_doc.attached_to_doctype)

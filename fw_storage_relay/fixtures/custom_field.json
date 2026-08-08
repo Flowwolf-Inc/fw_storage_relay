@@ -4,9 +4,9 @@
   "dt": "File",
   "fieldname": "cloud_storage_section",
   "fieldtype": "Tab Break",
-  "insert_after": "file_url",
+  "insert_after": "uploaded_to_google_drive",
   "label": "Cloud Storage",
-  "modified": "2026-06-08 15:52:19.000000",
+  "modified": "2026-08-08 10:00:00.000000",
   "name": "File-cloud_storage_section"
  },
  {
@@ -35,13 +35,24 @@
  {
   "doctype": "Custom Field",
   "dt": "File",
+  "fieldname": "old_file_url",
+  "fieldtype": "Data",
+  "insert_after": "cloud_storage_key",
+  "label": "Old File URL",
+  "modified": "2026-08-08 10:00:00.000000",
+  "name": "File-old_file_url",
+  "read_only": 1
+ },
+ {
+  "doctype": "Custom Field",
+  "dt": "File",
   "fieldname": "sync_status",
   "fieldtype": "Select",
-  "insert_after": "cloud_storage_key",
+  "insert_after": "old_file_url",
   "label": "Sync Status",
   "default": "Pending",
   "in_standard_filter": 1,
-  "modified": "2026-06-08 15:52:19.000000",
+  "modified": "2026-08-08 10:00:00.000000",
   "name": "File-sync_status",
   "options": "Pending\nSynced\nFailed"
  },
@@ -66,15 +77,5 @@
   "modified": "2026-06-08 15:52:19.000000",
   "name": "File-sync_error",
   "read_only": 1
- },
- {
-  "doctype": "Custom Field",
-  "dt": "File",
-  "fieldname": "file_details_tab",
-  "fieldtype": "Tab Break",
-  "insert_after": "sync_error",
-  "label": "Details",
-  "modified": "2026-06-08 15:52:19.000000",
-  "name": "File-file_details_tab"
  }
 ]

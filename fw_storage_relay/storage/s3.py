@@ -24,12 +24,22 @@ class S3Backend:
 			region_name=self.region,
 		)
 
-	def upload(self, key: str, content: bytes, *, content_type: str | None = None, public: bool = False) -> None:
+	def upload(
+		self,
+		key: str,
+		content: bytes,
+		*,
+		content_type: str | None = None,
+		public: bool = False,
+		metadata: dict | None = None,
+	) -> None:
 		extra_args = {}
 		if content_type:
 			extra_args["ContentType"] = content_type
 		if public:
 			extra_args["ACL"] = "public-read"
+		if metadata:
+			extra_args["Metadata"] = metadata
 
 		self._client.put_object(Bucket=self.bucket, Key=key, Body=content, **extra_args)
 
