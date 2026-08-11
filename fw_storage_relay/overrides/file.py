@@ -1,6 +1,8 @@
 # Copyright (c) 2026, Flowwolf Inc. and contributors
 # For license information, please see license.txt
 
+import base64
+
 import frappe
 from frappe import _
 from frappe.core.doctype.file.file import File
@@ -22,6 +24,17 @@ class CustomFile(File):
 			return get_backend().download(self.cloud_storage_key)
 
 		return super().get_content()
+
+	def get_base64_content(self) -> str:
+		"""Return this file's content as a Base64-encoded string.
+
+		Works for both local disk and S3-offloaded files since it is built
+		on top of get_content(), which already abstracts over storage backend.
+		"""
+		content = self.get_content()
+		if isinstance(content, str):
+			content = content.encode("utf-8")
+		return base64.b64encode(content).decode("utf-8")
 
 	def exists_on_disk(self):
 		if self.get("storage_backend") == STORAGE_BACKEND_S3 and self.get("sync_status") == "Synced":
