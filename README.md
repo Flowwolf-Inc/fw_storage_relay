@@ -160,6 +160,7 @@ Options:
 - `--new-url` — base URL of the new site
 - `--batch-size` — records per DB commit (default: 50)
 - `--dry-run` — print what would change without writing
+- `--order-by-direction` — process files ordered by `File.creation`; `desc` = newest first, `asc` = oldest first (default: `desc`)
 
 ### Step 2 — Rename S3 folder (optional)
 
@@ -188,6 +189,7 @@ Options:
 - `--dry-run` — print what would move without touching S3 or the database
 - `--db-only` — only update `cloud_storage_key` in the database; S3 is not touched (see below)
 - `--no-delete` — copy objects and update the database, but keep the old S3 objects in place so they can be reviewed and deleted manually later
+- `--order-by-direction` — process S3 keys ordered by each key's earliest `File.creation`; `desc` = newest first, `asc` = oldest first (default: `desc`)
 
 #### Keeping the old objects as a safety net (`--no-delete`)
 

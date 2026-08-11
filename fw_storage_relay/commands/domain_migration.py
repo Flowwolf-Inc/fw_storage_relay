@@ -11,9 +11,15 @@ import frappe
 from botocore.exceptions import ClientError
 from frappe.commands import get_site, pass_context
 from frappe.query_builder import Order
+from frappe.query_builder.functions import Min
 
 from fw_storage_relay.config import get_s3_config
 from fw_storage_relay.storage import get_backend
+
+
+def _resolve_order(direction: str) -> Order:
+	"Map an --order-by-direction CLI value ('desc'/'asc') to a query builder Order"
+	return Order.desc if direction == "desc" else Order.asc
 
 
 # ---------------------------------------------------------------------------
@@ -26,8 +32,15 @@ from fw_storage_relay.storage import get_backend
 @click.option("--new-url", required=True, help="New site base URL, e.g. https://sandbox-fortfreight.flowwolf.cloud")
 @click.option("--batch-size", default=50, show_default=True, help="Number of records per DB commit batch")
 @click.option("--dry-run", is_flag=True, help="Preview affected records without writing changes")
+@click.option(
+	"--order-by-direction",
+	type=click.Choice(["desc", "asc"]),
+	default="desc",
+	show_default=True,
+	help="Direction to process File.creation order in (desc = newest first)",
+)
 @pass_context
-def update_s3_file_urls(context, old_url, new_url, batch_size, dry_run):
+def update_s3_file_urls(context, old_url, new_url, batch_size, dry_run, order_by_direction):
 	"Replace the old site URL in File.file_url for all S3-backed files"
 
 	site = get_site(context)
@@ -35,12 +48,18 @@ def update_s3_file_urls(context, old_url, new_url, batch_size, dry_run):
 	frappe.connect()
 
 	try:
-		_run_url_update(old_url=old_url.rstrip("/"), new_url=new_url.rstrip("/"), batch_size=batch_size, dry_run=dry_run)
+		_run_url_update(
+			old_url=old_url.rstrip("/"),
+			new_url=new_url.rstrip("/"),
+			batch_size=batch_size,
+			dry_run=dry_run,
+			order_by_direction=order_by_direction,
+		)
 	finally:
 		frappe.destroy()
 
 
-def _run_url_update(*, old_url: str, new_url: str, batch_size: int, dry_run: bool):
+def _run_url_update(*, old_url: str, new_url: str, batch_size: int, dry_run: bool, order_by_direction: str = "desc"):
 	# Strip protocol so the LIKE filter matches both http:// and https:// stored values.
 	old_host = old_url.split("://", 1)[-1]
 	old_url_pattern = re.compile(r"https?://" + re.escape(old_host))
@@ -52,6 +71,7 @@ def _run_url_update(*, old_url: str, new_url: str, batch_size: int, dry_run: boo
 
 	File = frappe.qb.DocType("File")
 	processed = 0
+	order = _resolve_order(order_by_direction)
 
 	while True:
 		rows = (
@@ -59,7 +79,7 @@ def _run_url_update(*, old_url: str, new_url: str, batch_size: int, dry_run: boo
 			.select(File.name, File.file_url)
 			.where(File.storage_backend == "S3")
 			.where(File.file_url.like(f"%{old_host}%"))
-			.orderby(File.creation, order=Order.asc)
+			.orderby(File.creation, order=order)
 			.limit(batch_size)
 		).run(as_dict=True)
 
@@ -104,8 +124,15 @@ def _run_url_update(*, old_url: str, new_url: str, batch_size: int, dry_run: boo
 	is_flag=True,
 	help="Copy objects and update the database but keep the old S3 objects in place",
 )
+@click.option(
+	"--order-by-direction",
+	type=click.Choice(["desc", "asc"]),
+	default="desc",
+	show_default=True,
+	help="Direction to process File.creation order in (desc = newest first)",
+)
 @pass_context
-def rename_s3_folder(context, old_site, new_site, batch_size, dry_run, db_only, no_delete):
+def rename_s3_folder(context, old_site, new_site, batch_size, dry_run, db_only, no_delete, order_by_direction):
 	"Copy S3 objects from the old site prefix to the new one and update cloud_storage_key in File records"
 
 	site = get_site(context)
@@ -120,6 +147,7 @@ def rename_s3_folder(context, old_site, new_site, batch_size, dry_run, db_only, 
 			dry_run=dry_run,
 			db_only=db_only,
 			no_delete=no_delete,
+			order_by_direction=order_by_direction,
 		)
 	finally:
 		frappe.destroy()
@@ -133,6 +161,7 @@ def _run_folder_rename(
 	dry_run: bool,
 	db_only: bool = False,
 	no_delete: bool = False,
+	order_by_direction: str = "desc",
 ):
 	if not db_only and not get_s3_config():
 		click.echo("S3 configuration is missing from site_config.json. Aborting.")
@@ -152,18 +181,20 @@ def _run_folder_rename(
 	processed = 0
 	failed = 0
 	old_prefix = f"{old_site}/"
+	order = _resolve_order(order_by_direction)
 
 	while True:
-		# Select DISTINCT keys — multiple File records may share the same cloud_storage_key
-		# (duplicate file deduplication). Processing by key avoids CopyObject NoSuchKey errors
-		# that occur when a sibling record already deleted the old S3 object.
+		# Group by key instead of DISTINCT — multiple File records may share the same
+		# cloud_storage_key (duplicate file deduplication), and grouping lets us order by
+		# each key's earliest/latest File.creation. Processing by key avoids CopyObject
+		# NoSuchKey errors that occur when a sibling record already deleted the old S3 object.
 		keys = (
 			frappe.qb.from_(File)
 			.select(File.cloud_storage_key)
-			.distinct()
 			.where(File.storage_backend == "S3")
 			.where(File.cloud_storage_key.like(f"{old_prefix}%"))
-			.orderby(File.cloud_storage_key, order=Order.asc)
+			.groupby(File.cloud_storage_key)
+			.orderby(Min(File.creation), order=order)
 			.limit(batch_size)
 		).run(pluck="cloud_storage_key")
 
