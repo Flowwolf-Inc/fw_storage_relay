@@ -36,7 +36,7 @@
   "doctype": "Custom Field",
   "dt": "File",
   "fieldname": "old_file_url",
-  "fieldtype": "Data",
+  "fieldtype": "Small Text",
   "insert_after": "cloud_storage_key",
   "label": "Old File URL",
   "modified": "2026-08-08 10:00:00.000000",
