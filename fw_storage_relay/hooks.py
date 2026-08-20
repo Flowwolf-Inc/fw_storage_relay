@@ -26,3 +26,9 @@ fixtures = ["Custom Field"]
 doctype_js = {
 	"File": "public/js/file.js",
 }
+
+scheduler_events = {
+	"daily_long": [
+		"fw_storage_relay.fw_storage_relay.doctype.fw_s3_relay_settings.fw_s3_relay_settings.run_scheduled_migration_daily",
+	],
+}

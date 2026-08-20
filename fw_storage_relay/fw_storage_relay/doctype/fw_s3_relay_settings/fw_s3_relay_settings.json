@@ -12,7 +12,12 @@
   "make_files_public",
   "presigned_url_expiry",
   "section_break_exclusions",
-  "excluded_doctypes"
+  "excluded_doctypes",
+  "section_break_scheduled_migration",
+  "enable_scheduled_migration",
+  "column_break_scheduled_migration",
+  "older_than_days",
+  "max_files_per_run"
  ],
  "fields": [
   {
@@ -64,12 +69,46 @@
    "fieldtype": "Table",
    "label": "Excluded Doctypes",
    "options": "FW S3 Relay Excluded Doctype"
+  },
+  {
+   "fieldname": "section_break_scheduled_migration",
+   "fieldtype": "Section Break",
+   "label": "Scheduled Migration"
+  },
+  {
+   "default": "0",
+   "description": "Automatically offload pending local files to S3 on a schedule.",
+   "fieldname": "enable_scheduled_migration",
+   "fieldtype": "Check",
+   "label": "Enable Scheduled Migration"
+  },
+  {
+   "fieldname": "column_break_scheduled_migration",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "30",
+   "depends_on": "eval:doc.enable_scheduled_migration",
+   "description": "Only migrate files created more than this many days ago. Set to 0 to process all pending files.",
+   "fieldname": "older_than_days",
+   "fieldtype": "Int",
+   "label": "Older Than Days",
+   "non_negative": 1
+  },
+  {
+   "default": "0",
+   "depends_on": "eval:doc.enable_scheduled_migration",
+   "description": "Maximum number of files to upload per scheduled run. Set to 0 for no limit.",
+   "fieldname": "max_files_per_run",
+   "fieldtype": "Int",
+   "label": "Max Files Per Run",
+   "non_negative": 1
   }
  ],
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-05 15:25:57.000000",
+ "modified": "2026-08-20 05:38:00.000000",
  "modified_by": "Administrator",
  "module": "FW Storage Relay",
  "name": "FW S3 Relay Settings",

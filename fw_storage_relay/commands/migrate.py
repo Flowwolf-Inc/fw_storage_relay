@@ -10,6 +10,7 @@ import frappe
 from frappe.commands import get_site, pass_context
 from frappe.query_builder import Order
 from frappe.query_builder.functions import IfNull
+from frappe.utils import add_days, now_datetime
 
 from fw_storage_relay.config import can_offload_file, get_excluded_doctypes
 from fw_storage_relay.relay import _copy_s3_metadata_from_duplicate, offload_file, validate_relay_ready
@@ -22,8 +23,14 @@ MISSING_LOCAL_FILE_ERROR = "Local file not found on disk"
 @click.option("--limit", default=0, show_default=True, help="Maximum files to process (0 = no limit)")
 @click.option("--workers", default=1, show_default=True, help="Number of parallel upload threads")
 @click.option("--force", is_flag=True, default=False, help="Ignore the enabled flag from FW S3 Relay Settings")
+@click.option(
+	"--older-than-days",
+	default=30,
+	show_default=True,
+	help="Only process files created more than N days ago (0 = no age filter)",
+)
 @pass_context
-def migrate_s3_files(context, batch_size, limit, workers, force):
+def migrate_s3_files(context, batch_size, limit, workers, force, older_than_days):
 	"Migrate local File attachments to S3"
 
 	site = get_site(context)
@@ -31,7 +38,7 @@ def migrate_s3_files(context, batch_size, limit, workers, force):
 	frappe.connect()
 
 	try:
-		_run_migration(batch_size=batch_size, limit=limit, workers=workers, force=force)
+		_run_migration(batch_size=batch_size, limit=limit, workers=workers, force=force, older_than_days=older_than_days)
 	finally:
 		frappe.destroy()
 
@@ -102,27 +109,32 @@ def _process_file(site: str, file_name: str, force: bool = False) -> _FileResult
 		frappe.destroy()
 
 
-def _run_migration(batch_size: int, limit: int, workers: int = 1, force: bool = False):
+def _run_migration(batch_size: int, limit: int, workers: int = 1, force: bool = False, older_than_days: int = 0, log=None):
+	if log is None:
+		log = click.echo
+
 	if not validate_relay_ready(ignore_enabled=force):
 		if force:
-			click.echo("S3 site_config is missing.")
+			log("S3 site_config is missing.")
 		else:
-			click.echo("FW Storage Relay is disabled or S3 site_config is missing.")
+			log("FW Storage Relay is disabled or S3 site_config is missing.")
 		return
 
 	if force and not frappe.db.get_single_value("FW S3 Relay Settings", "enabled"):
-		click.echo("Running with --force: FW Storage Relay is disabled, migrating anyway.")
+		log("Running with --force: FW Storage Relay is disabled, migrating anyway.")
 
 	site = frappe.local.site
 
 	if workers > 1:
-		click.echo(f"Starting parallel migration with {workers} worker(s).")
-		_run_migration_parallel(site=site, batch_size=batch_size, limit=limit, workers=workers, force=force)
+		log(f"Starting parallel migration with {workers} worker(s).")
+		_run_migration_parallel(site=site, batch_size=batch_size, limit=limit, workers=workers, force=force, older_than_days=older_than_days, log=log)
 	else:
-		_run_migration_serial(batch_size=batch_size, limit=limit, force=force)
+		_run_migration_serial(batch_size=batch_size, limit=limit, force=force, older_than_days=older_than_days, log=log)
 
 
-def _run_migration_parallel(site: str, batch_size: int, limit: int, workers: int, force: bool = False):
+def _run_migration_parallel(site: str, batch_size: int, limit: int, workers: int, force: bool = False, older_than_days: int = 0, log=None):
+	if log is None:
+		log = click.echo
 	processed = 0
 
 	with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -132,7 +144,7 @@ def _run_migration_parallel(site: str, batch_size: int, limit: int, workers: int
 				break
 
 			current_batch_size = batch_size if remaining_limit is None else min(batch_size, remaining_limit)
-			files = _get_pending_files(current_batch_size, get_excluded_doctypes())
+			files = _get_pending_files(current_batch_size, get_excluded_doctypes(), older_than_days=older_than_days)
 			if not files:
 				break
 
@@ -141,19 +153,21 @@ def _run_migration_parallel(site: str, batch_size: int, limit: int, workers: int
 				result = future.result()
 				if result.synced_from_duplicate:
 					processed += 1
-					click.echo(f"Synced from duplicate: {result.file_name}")
+					log(f"Synced from duplicate: {result.file_name}")
 				elif result.success:
 					processed += 1
-					click.echo(f"Migrated {processed}: {result.file_name}")
+					log(f"Migrated {processed}: {result.file_name}")
 				elif result.missing:
-					click.echo(f"Skipping missing local file: {result.file_name}")
+					log(f"Skipping missing local file: {result.file_name}")
 				elif result.error:
-					click.echo(f"Failed: {result.file_name} (logged)")
+					log(f"Failed: {result.file_name} (logged)")
 
-	click.echo(f"Migration complete. Processed {processed} file(s).")
+	log(f"Migration complete. Processed {processed} file(s).")
 
 
-def _run_migration_serial(batch_size: int, limit: int, force: bool = False):
+def _run_migration_serial(batch_size: int, limit: int, force: bool = False, older_than_days: int = 0, log=None):
+	if log is None:
+		log = click.echo
 	processed = 0
 
 	while True:
@@ -162,7 +176,7 @@ def _run_migration_serial(batch_size: int, limit: int, force: bool = False):
 			break
 
 		current_batch_size = batch_size if remaining_limit is None else min(batch_size, remaining_limit)
-		files = _get_pending_files(current_batch_size, get_excluded_doctypes())
+		files = _get_pending_files(current_batch_size, get_excluded_doctypes(), older_than_days=older_than_days)
 		if not files:
 			break
 
@@ -175,7 +189,7 @@ def _run_migration_serial(batch_size: int, limit: int, force: bool = False):
 				if not file_doc.exists_on_disk():
 					if _copy_s3_metadata_from_duplicate(file_doc, persist=True):
 						processed += 1
-						click.echo(f"Synced from duplicate: {file_name}")
+						log(f"Synced from duplicate: {file_name}")
 						continue
 
 					frappe.db.set_value(
@@ -188,12 +202,12 @@ def _run_migration_serial(batch_size: int, limit: int, force: bool = False):
 						update_modified=False,
 					)
 					_add_comment(file_name, f"S3 Migration: {MISSING_LOCAL_FILE_ERROR}")
-					click.echo(f"Skipping missing local file: {file_name}")
+					log(f"Skipping missing local file: {file_name}")
 					continue
 
 				offload_file(file_doc, persist=True, ignore_enabled=force)
 				processed += 1
-				click.echo(f"Migrated {processed}: {file_name}")
+				log(f"Migrated {processed}: {file_name}")
 			except Exception:
 				frappe.log_error(
 					title="FW Storage Relay Migration Failed",
@@ -209,17 +223,17 @@ def _run_migration_serial(batch_size: int, limit: int, force: bool = False):
 					update_modified=False,
 				)
 				_add_comment(file_name, "S3 Migration failed. See Error Log for details.")
-				click.echo(f"Failed: {file_name} (logged)")
+				log(f"Failed: {file_name} (logged)")
 			finally:
 				# Commit per file: uploads and local deletions are not
 				# transactional, so a long-lived uncommitted batch risks DB
 				# state rolling back after files were already moved to S3.
 				frappe.db.commit()
 
-	click.echo(f"Migration complete. Processed {processed} file(s).")
+	log(f"Migration complete. Processed {processed} file(s).")
 
 
-def _get_pending_files(batch_size: int, excluded_doctypes: frozenset[str]) -> list[str]:
+def _get_pending_files(batch_size: int, excluded_doctypes: frozenset[str], older_than_days: int = 0) -> list[str]:
 	File = frappe.qb.DocType("File")
 
 	query = (
@@ -232,6 +246,10 @@ def _get_pending_files(batch_size: int, excluded_doctypes: frozenset[str]) -> li
 		.orderby(File.creation, order=Order.asc)
 		.limit(batch_size)
 	)
+
+	if older_than_days > 0:
+		cutoff = add_days(now_datetime(), -older_than_days)
+		query = query.where(File.creation < cutoff)
 
 	if excluded_doctypes:
 		query = query.where(
