@@ -82,8 +82,29 @@ Options:
 - `--batch-size` — files processed per DB commit batch (default: 50)
 - `--limit` — maximum files to process in this run (default: 0 = no limit)
 - `--workers` — number of parallel upload threads (default: 1)
+- `--older-than-days` — only process files created more than N days ago (default: 30; set to 0 for no age filter)
+
+Example — migrate only files older than 7 days:
+
+```bash
+bench --site <site> migrate-s3-files --older-than-days 7
+```
 
 For large datasets (multi-TB), run inside `tmux` or `screen` and tune batch size as needed.
+
+## Scheduled migration
+
+FW S3 Relay can automatically offload pending local files every night without any manual `bench` commands.
+
+Enable it in **FW S3 Relay Settings → Scheduled Migration**:
+
+| Setting | Description |
+|---------|-------------|
+| **Enable Scheduled Migration** | Master switch for the daily scheduler job. |
+| **Older Than Days** | Only migrate files whose `creation` date is older than this many days (default: 30; 0 = all pending). |
+| **Max Files Per Run** | Cap the number of files uploaded per run to prevent job timeouts on large backlogs (0 = no limit). |
+
+The job runs in Frappe's `daily_long` queue. Use the **Migrate Now** button on the settings form to trigger an immediate run with the same settings.
 
 ## Cleanup orphaned local files
 
