@@ -47,6 +47,7 @@ class TestServeUrlDuplicate(FrappeTestCase):
 				"cloud_storage_key": "sandbox/private/00539c19-bd8a-4950-bd41-512af2cd4e55.pdf",
 				"sync_status": "Synced",
 				"content_hash": "c97414478dc90f3bcb9af7f41806e681",
+				"old_file_url": "/private/files/rate_confirmation_without_page_2.pdf",
 			}
 		)
 
@@ -64,6 +65,7 @@ class TestServeUrlDuplicate(FrappeTestCase):
 		self.assertEqual(copy.sync_status, "Synced")
 		self.assertEqual(copy.cloud_storage_key, source.cloud_storage_key)
 		self.assertEqual(copy.content_hash, source.content_hash)
+		self.assertEqual(copy.old_file_url, source.old_file_url)
 		self.assertIn(f"fid={copy.name}", copy.file_url)
 		self.assertNotIn(f"fid={source.name}", copy.file_url)
 
@@ -161,6 +163,7 @@ class TestServeUrlDuplicate(FrappeTestCase):
 				"cloud_storage_key": "sandbox/private/already-synced.pdf",
 				"sync_status": "Synced",
 				"content_hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				"old_file_url": "/private/files/already-synced.pdf",
 			}
 		)
 		stuck = self._insert_stuck_copy(source)
@@ -172,6 +175,7 @@ class TestServeUrlDuplicate(FrappeTestCase):
 		self.assertEqual(stuck.storage_backend, STORAGE_BACKEND_S3)
 		self.assertEqual(stuck.sync_status, "Synced")
 		self.assertEqual(stuck.cloud_storage_key, source.cloud_storage_key)
+		self.assertEqual(stuck.old_file_url, source.old_file_url)
 		self.assertIn(f"fid={stuck.name}", stuck.file_url)
 
 	def test_patch_marks_missing_source_failed(self):
@@ -212,11 +216,13 @@ class TestServeUrlDuplicate(FrappeTestCase):
 				"storage_backend": STORAGE_BACKEND_S3,
 				"cloud_storage_key": "sandbox/private/lookup.pdf",
 				"sync_status": "Synced",
+				"old_file_url": "/private/files/lookup.pdf",
 			}
 		)
 		found = get_relay_source_file(get_serve_file_url(source.name))
 		self.assertEqual(found.name, source.name)
 		self.assertEqual(found.cloud_storage_key, source.cloud_storage_key)
+		self.assertEqual(found.old_file_url, source.old_file_url)
 
 	def _stub_s3_backend(self):
 		backend = patch("fw_storage_relay.overrides.file.get_backend").start()

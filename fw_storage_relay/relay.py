@@ -67,6 +67,7 @@ def get_relay_source_file(file_url: str | None) -> dict | None:
 			"synced_on",
 			"storage_backend",
 			"sync_status",
+			"old_file_url",
 		],
 		as_dict=True,
 	)
@@ -336,6 +337,8 @@ def _link_from_serve_url_source(file_doc: File) -> bool:
 	values = {"is_private": cint(source.is_private)}
 	if source.content_hash and not file_doc.content_hash:
 		values["content_hash"] = source.content_hash
+	if source.old_file_url and not file_doc.get("old_file_url"):
+		values["old_file_url"] = source.old_file_url
 
 	if file_doc.name:
 		frappe.db.set_value("File", file_doc.name, values, update_modified=False)

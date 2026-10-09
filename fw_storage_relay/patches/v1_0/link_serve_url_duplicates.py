@@ -23,7 +23,7 @@ def execute():
 	file_table = frappe.qb.DocType("File")
 	rows = (
 		frappe.qb.from_(file_table)
-		.select(file_table.name, file_table.file_url, file_table.content_hash)
+		.select(file_table.name, file_table.file_url, file_table.content_hash, file_table.old_file_url)
 		.where(IfNull(file_table.storage_backend, "Local") == "Local")
 		.where(file_table.is_folder == 0)
 		.where(file_table.file_url.like(SERVE_URL_LIKE))
@@ -68,5 +68,7 @@ def _link_or_fail(row) -> None:
 	}
 	if source.content_hash and not row.content_hash:
 		values["content_hash"] = source.content_hash
+	if source.old_file_url and not row.old_file_url:
+		values["old_file_url"] = source.old_file_url
 
 	frappe.db.set_value("File", row.name, values, update_modified=False)
