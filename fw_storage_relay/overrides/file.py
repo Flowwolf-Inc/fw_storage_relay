@@ -6,8 +6,10 @@ import base64
 import frappe
 from frappe import _
 from frappe.core.doctype.file.file import File
+from frappe.utils import cint
 
 from fw_storage_relay.config import STORAGE_BACKEND_S3
+from fw_storage_relay.relay import get_relay_source_file
 from fw_storage_relay.share_key import (
 	generate_file_share_key as _generate_file_share_key,
 	get_file_share_info as _get_file_share_info,
@@ -19,6 +21,16 @@ from fw_storage_relay.storage import get_backend
 
 
 class CustomFile(File):
+	def set_is_private(self):
+		source = get_relay_source_file(self.file_url)
+		if source:
+			self.is_private = cint(source.is_private)
+			if not self.content_hash and source.content_hash:
+				self.content_hash = source.content_hash
+			return
+
+		super().set_is_private()
+
 	def get_content(self) -> bytes:
 		if self.get("storage_backend") == STORAGE_BACKEND_S3 and self.get("cloud_storage_key"):
 			return get_backend().download(self.cloud_storage_key)

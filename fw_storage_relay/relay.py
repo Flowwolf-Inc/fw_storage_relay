@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import re
 import traceback
 from typing import TYPE_CHECKING
+from urllib.parse import unquote
 
 import frappe
 from botocore.exceptions import ClientError
@@ -28,6 +30,55 @@ from fw_storage_relay.storage import get_backend
 
 if TYPE_CHECKING:
 	from frappe.core.doctype.file.file import File
+
+SERVE_FILE_FID_RE = re.compile(
+	r"fw_storage_relay\.api\.serve_file\.serve_file\?[^#]*\bfid=([^&#]+)",
+	re.IGNORECASE,
+)
+
+
+def parse_serve_file_fid(file_url: str | None) -> str | None:
+	"""Extract fid from a serve_file URL, ignoring host so old domains still match."""
+	if not file_url:
+		return None
+
+	match = SERVE_FILE_FID_RE.search(file_url)
+	if not match:
+		return None
+
+	fid = unquote(match.group(1)).strip()
+	return fid or None
+
+
+def get_relay_source_file(file_url: str | None) -> dict | None:
+	"""Return the File referenced by a serve_file?fid= URL, if it exists."""
+	fid = parse_serve_file_fid(file_url)
+	if not fid:
+		return None
+
+	return frappe.db.get_value(
+		"File",
+		fid,
+		[
+			"name",
+			"is_private",
+			"content_hash",
+			"cloud_storage_key",
+			"synced_on",
+			"storage_backend",
+			"sync_status",
+		],
+		as_dict=True,
+	)
+
+
+def is_synced_s3_source(source: dict | None) -> bool:
+	return bool(
+		source
+		and source.get("storage_backend") == STORAGE_BACKEND_S3
+		and source.get("sync_status") == "Synced"
+		and source.get("cloud_storage_key")
+	)
 
 
 def write_file(doc_or_fname, content=None, content_type=None, is_private=0):
@@ -56,6 +107,10 @@ def _write_file_for_doc(file_doc: File):
 
 def after_insert_offload(doc: File, method=None):
 	if doc.get("storage_backend") == STORAGE_BACKEND_S3:
+		_refresh_s3_file_url(doc)
+		return
+
+	if _link_from_serve_url_source(doc):
 		_refresh_s3_file_url(doc)
 		return
 
@@ -247,6 +302,45 @@ def _sync_from_duplicate(file_doc: File, *, persist: bool, delete_local: bool = 
 
 def _copy_s3_metadata_from_duplicate(file_doc: File, *, persist: bool, delete_local: bool = False) -> bool:
 	return _sync_from_duplicate(file_doc, persist=persist, delete_local=delete_local) is not None
+
+
+def _link_from_serve_url_source(file_doc: File) -> bool:
+	"""Copy S3 metadata from the File referenced by this record's serve URL.
+
+	Mailflow and similar callers create new File rows by copying an already
+	synced serve_file?fid= URL. Those rows have no local content, so hash
+	matching never runs. There is also no local file to delete.
+	"""
+	source = get_relay_source_file(file_doc.file_url)
+	if not source or not is_synced_s3_source(source):
+		return False
+
+	if file_doc.name and file_doc.name == source.name:
+		return False
+
+	if should_make_files_public():
+		file_url = get_backend().get_public_url(source.cloud_storage_key)
+	elif file_doc.name:
+		file_url = get_serve_file_url(file_doc.name)
+	else:
+		file_url = None
+
+	_set_sync_success(
+		file_doc,
+		source.cloud_storage_key,
+		file_url,
+		persist=True,
+		synced_on=source.synced_on,
+	)
+
+	values = {"is_private": cint(source.is_private)}
+	if source.content_hash and not file_doc.content_hash:
+		values["content_hash"] = source.content_hash
+
+	if file_doc.name:
+		frappe.db.set_value("File", file_doc.name, values, update_modified=False)
+	file_doc.update(values)
+	return True
 
 
 def get_serve_file_url(file_name: str) -> str:
